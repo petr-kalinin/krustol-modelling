@@ -77,38 +77,66 @@ protected:
 
 class MovingYWall : public YWall {
 public:
+static const constexpr double LAMBDA = 0;
+//static const constexpr double ALPHA = 0.95;
+static const constexpr double M = 1000;
+static const constexpr double Mp = 200;
     MovingYWall(double y0, int dir, double v, bool accelerate) :
         YWall(y0, dir), v_(v), accelerate_(accelerate), totalTime_(sf::seconds(0)) {}
     void process(const sf::Time& time) {
-        totalTime_ += time;
-        if (!isMoving()) {
-            return;
-        }
         y_ += v_ * time.asSeconds();
-    }
-
-    bool isMoving() {
-        return totalTime_.asSeconds() > 10;
+        v_ *= (1 - LAMBDA * time.asSeconds());
+        pressure_ = 0;
     }
 
     void interact(Particle& p) override {
         if ((p.y - y_) * dir_ < 0) {
             p.y = 2 * y_ - p.y;
             double vc = v_;
-            if (!accelerate_) {
-                vc = 0;
-            }
-            p.vy = 2 * vc - p.vy;
+            double v0 = (M * v_ + Mp * p.vy) / (M + Mp);
+            p.vy = 2 * v0 - p.vy;
+            double vv = 2 * v0 - 2 * v_;
+            pressure_ -= vv * M;
         }
     }
 
     double y() { return y_; }
 
+    double pressure() { return pressure_; }
+
+    void addV(double dv) {
+        v_ += dv;
+    }
+
 private:
     double v_;
     bool accelerate_;
+    double pressure_ = 0;
     sf::Time totalTime_;
 };
+
+class Piston {
+public:
+    static const constexpr double WIDTH = 10;
+    static const constexpr double K = 10;
+    Piston(double y, double m): m_(m), y0_(y), walls{std::make_shared<MovingYWall>(y - WIDTH / 2, -1, 0, true), std::make_shared<MovingYWall>(y + WIDTH / 2, 1, 0, true)} {};
+
+    std::shared_ptr<MovingYWall> wall(int idx) { return walls[idx]; }
+
+    void process(const sf::Time& time) {
+        double y = (wall(0)->y() + wall(1)->y())/2;
+        double totalP = walls[0]->pressure() + walls[1]->pressure();
+        totalP += K * (y - y0_) * time.asSeconds() * MovingYWall::M;
+        for (auto& wall : walls) {
+            wall->addV(- totalP  / MovingYWall::M);
+        }
+    }
+
+private:
+    double m_, y0_;
+    std::array<std::shared_ptr<MovingYWall>, 2> walls;
+};
+
 
 class PressureCollectorYWall : public YWall {
     static const constexpr double LAMBDA = 0.2;
@@ -144,7 +172,7 @@ public:
         return Particle{
             dx_(gen_),
             dy_(gen_),
-            dv_(gen_),
+            0, // dv_(gen_),
             dv_(gen_)
             //vmax_ * (2 * dvi_(gen_) - 1),
             //vmax_ * (2 * dvi_(gen_) - 1)
@@ -160,8 +188,8 @@ private:
 
 class Gas {
     static const constexpr int RADIUS = 3;
-    static const constexpr double FORCE = 1e4;
-    static const constexpr double D = 2;
+    static const constexpr double FORCE = 1;
+    static const constexpr double D = 10;
 public:
     Gas(int n, Distribution& dist, std::vector<std::shared_ptr<Boundary>> boundaries) :
         boundaries_(std::move(boundaries))
@@ -179,6 +207,14 @@ public:
             shape.setFillColor(sf::Color::Green);
             window.draw(shape);
         }
+    }
+
+    double energy() {
+        double e = 0;
+        for (const auto& p : particles_) {
+            e += p.vx * p.vx + p.vy * p.vy;
+        }
+        return e / particles_.size();
     }
 
     void process(const sf::Time& time) {
@@ -328,38 +364,38 @@ int main()
     const double MARGIN = 10;
     const double MAXX = 800;
     const double MAXY = 800;
-    const double MAXV = 300;
-    const int N = 1000;
+    const double MAXV = 100;
+    const int N = 100;
     const int BINS = 100;
     const double MOVINGV = 10;
     sf::RenderWindow window(sf::VideoMode(MAXX + 10 * MARGIN, MAXY + MARGIN), "Gas");
-    sf::RenderWindow window2(sf::VideoMode(MAXX + 10 * MARGIN, MAXY + MARGIN), "Gas2");
 
-    Distribution dist(0, 0, MAXX, MAXY, MAXV);
-    auto movingWall = std::make_shared<MovingYWall>(MARGIN, 1, MOVINGV, false);
+    Piston piston(MAXY / 2, 1);
     auto pressureWall = std::make_shared<PressureCollectorYWall>(MAXY, -1);
     std::vector<std::shared_ptr<Boundary>> boundaries{
         std::make_shared<XWall>(MARGIN, 1),
         std::make_shared<XWall>(MAXX, -1),
-        pressureWall,
-        movingWall,
+        std::make_shared<YWall>(MARGIN, 1),
+        piston.wall(0),
     };
+    Distribution dist(0, MARGIN, MAXX, piston.wall(0)->y(), MAXV);
+    Distribution dist2(0, piston.wall(1)->y(), MAXX, MAXY, MAXV / 2);
+
     Gas gas(N, dist, boundaries);
 
-    auto movingWall2 = std::make_shared<MovingYWall>(MARGIN, 1, MOVINGV, true);
-    auto pressureWall2 = std::make_shared<PressureCollectorYWall>(MAXY, -1);
     std::vector<std::shared_ptr<Boundary>> boundaries2{
         std::make_shared<XWall>(MARGIN, 1),
         std::make_shared<XWall>(MAXX, -1),
-        pressureWall2,
-        movingWall2,
+        std::make_shared<YWall>(MAXY, -1),
+        piston.wall(1)
     };
-    Gas gas2(N, dist, boundaries2);
+    Gas gas2(N, dist2, boundaries2);
 
     Graph graph(1300, MAXY, 3e3, MAXY, true);
+    Graph graph2(1300, MAXY, 3e3, MAXV * MAXV, true);
 
     sf::Clock clock;
-    double p1, p2;
+    sf::Time totalTime;
 
     while (window.isOpen())
     {
@@ -371,42 +407,40 @@ int main()
         }
 
         sf::Time elapsed = clock.restart();
+        totalTime += elapsed;
 
         gas.process(elapsed);
+        gas2.process(elapsed);
+
+        piston.process(elapsed);
+
         for (auto& b: boundaries) {
             b->process(elapsed);
         }
-
-        gas2.process(elapsed);
         for (auto& b: boundaries2) {
             b->process(elapsed);
         }
 
-        if (!movingWall->isMoving()) {
-            p1 = pressureWall->pressure();
-            p2 = pressureWall2->pressure();
-        } else {
-            graph.setPoint(0, pressureWall->pressure(), MAXY - movingWall->y());
-            graph.setPoint(1, pressureWall2->pressure(), MAXY - movingWall2->y());
-            graph.setPoint(2, p1 * (MAXY - MARGIN) / (MAXY - movingWall->y()), MAXY - movingWall->y());
-            graph.setPoint(3, p2 * std::pow((MAXY - MARGIN) / (MAXY - movingWall2->y()), 3), MAXY - movingWall2->y());
-        }
+        graph.setPoint(0, totalTime.asSeconds() * 30, MAXY - (piston.wall(0)->y() + piston.wall(1)->y()) / 2);
+        graph.setPoint(1, totalTime.asSeconds() * 30, MAXY / 2);
+
+        graph2.setPoint(0, totalTime.asSeconds() * 30, gas.energy());
+        graph2.setPoint(1, totalTime.asSeconds() * 30, gas2.energy());
 
         window.clear();
         gas.draw(window);
         for (auto& b: boundaries) {
             b->draw(window);
         }
+        gas2.draw(window);
+        for (auto& b: boundaries2) {
+            b->draw(window);
+        }
         window.display();
 
-        window2.clear();
-        gas2.draw(window2);
-        for (auto& b: boundaries2) {
-            b->draw(window2);
-        }
-        window2.display();
-
         graph.draw();
+
+        graph2.draw();
     }
 
     return 0;
