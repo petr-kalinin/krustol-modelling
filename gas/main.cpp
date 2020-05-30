@@ -52,10 +52,13 @@ public:
 
     void interact(Particle& p) override {
         if ((p.y - y_) * dir_ < 0) {
+            collectMomentum(p);
             p.y = 2 * y_ - p.y;
             p.vy *= -1;
         }
     }
+
+    virtual void collectMomentum(Particle& p) {}
 
     void draw(sf::RenderWindow& window) override {
         sf::Vertex line[] =
@@ -67,9 +70,63 @@ public:
         window.draw(line, 2, sf::Lines);
     };
 
-private:
+protected:
     double y_;
     int dir_;
+};
+
+class MovingYWall : public YWall {
+public:
+    MovingYWall(double y0, int dir, double v, bool accelerate) :
+        YWall(y0, dir), v_(v), accelerate_(accelerate), totalTime_(sf::seconds(0)) {}
+    void process(const sf::Time& time) {
+        totalTime_ += time;
+        if (totalTime_.asSeconds() < 5) {
+            return;
+        }
+        y_ += v_ * time.asSeconds();
+    }
+
+    void interact(Particle& p) override {
+        if ((p.y - y_) * dir_ < 0) {
+            p.y = 2 * y_ - p.y;
+            double vc = v_;
+            if (!accelerate_) {
+                vc = 0;
+            }
+            p.vy = 2 * vc - p.vy;
+        }
+    }
+
+    double y() { return y_; }
+
+private:
+    double v_;
+    bool accelerate_;
+    sf::Time totalTime_;
+};
+
+class PressureCollectorYWall : public YWall {
+    static const constexpr double LAMBDA = 0.3;
+public:
+    using YWall::YWall;
+
+    void process(const sf::Time& time) override {
+        pressure_ *= (1 - LAMBDA * time.asSeconds());
+        cnt_ *= (1 - LAMBDA * time.asSeconds());
+        cnt_ += 1;
+    }
+
+    void collectMomentum(Particle& p) override {
+        pressure_ += -p.vy * dir_;
+    }
+
+    double pressure() {
+        return pressure_ / cnt_;
+    }
+private:
+    double pressure_ = 0;
+    double cnt_ = 0;
 };
 
 class Distribution {
@@ -129,6 +186,7 @@ public:
                 b->interact(p);
             }
         }
+        /*
         for (int i = 0; i < particles_.size(); i++) {
             for (int j = 0; j < i; j++) {
                 Particle& p1 = particles_[i];
@@ -146,6 +204,7 @@ public:
                 p2.vy += fy * sec;
             }
         }
+        */
     }
 
     const std::vector<Particle>& particles() const {
@@ -271,16 +330,17 @@ int main()
     sf::RenderWindow window(sf::VideoMode(MAXX + 10 * MARGIN, MAXY + MARGIN), "Gas");
 
     Distribution dist(0, 0, MAXX, MAXY, MAXV);
+    auto movingWall = std::make_shared<MovingYWall>(MARGIN, 1, 30, false);
+    auto pressureWall = std::make_shared<PressureCollectorYWall>(MAXY, -1);
     std::vector<std::shared_ptr<Boundary>> boundaries{
         std::make_shared<XWall>(MARGIN, 1),
         std::make_shared<XWall>(MAXX, -1),
-        std::make_shared<YWall>(MARGIN, 1),
-        std::make_shared<YWall>(MAXY, -1),
+        pressureWall,
+        movingWall,
     };
     Gas gas(N, dist, boundaries);
 
-    Graph graph(1300, 800, BINS, 1, false);
-    StatCollector statCollector(gas, graph, MAXV * 5, BINS);
+    Graph graph(1300, MAXY, 3e3, MAXY, true);
 
     sf::Clock clock;
 
@@ -299,7 +359,8 @@ int main()
         for (auto& b: boundaries) {
             b->process(elapsed);
         }
-        statCollector.process(elapsed);
+        graph.setPoint(0, pressureWall->pressure(), MAXY - movingWall->y());
+
         window.clear();
         gas.draw(window);
         for (auto& b: boundaries) {
