@@ -81,10 +81,14 @@ public:
         YWall(y0, dir), v_(v), accelerate_(accelerate), totalTime_(sf::seconds(0)) {}
     void process(const sf::Time& time) {
         totalTime_ += time;
-        if (totalTime_.asSeconds() < 5) {
+        if (!isMoving()) {
             return;
         }
         y_ += v_ * time.asSeconds();
+    }
+
+    bool isMoving() {
+        return totalTime_.asSeconds() > 10;
     }
 
     void interact(Particle& p) override {
@@ -107,7 +111,7 @@ private:
 };
 
 class PressureCollectorYWall : public YWall {
-    static const constexpr double LAMBDA = 0.3;
+    static const constexpr double LAMBDA = 0.2;
 public:
     using YWall::YWall;
 
@@ -219,7 +223,7 @@ private:
 class Graph {
 public:
     Graph(int sx, int sy, double maxx, double maxy, bool permanent) :
-        sx_(sx), sy_(sy), maxx_(maxx), maxy_(maxy), permanent_(permanent), window_(sf::VideoMode(sx, sy), "Plot"), colors_{sf::Color::White, sf::Color::Red, sf::Color::Green}, points_(colors_.size())
+        sx_(sx), sy_(sy), maxx_(maxx), maxy_(maxy), permanent_(permanent), window_(sf::VideoMode(sx, sy), "Plot"), colors_{sf::Color::White, sf::Color::Red, sf::Color::Green, sf::Color::Cyan}, points_(colors_.size())
     {}
 
     void setPoint(int line, double x, double y) {
@@ -327,10 +331,12 @@ int main()
     const double MAXV = 300;
     const int N = 1000;
     const int BINS = 100;
+    const double MOVINGV = 10;
     sf::RenderWindow window(sf::VideoMode(MAXX + 10 * MARGIN, MAXY + MARGIN), "Gas");
+    sf::RenderWindow window2(sf::VideoMode(MAXX + 10 * MARGIN, MAXY + MARGIN), "Gas2");
 
     Distribution dist(0, 0, MAXX, MAXY, MAXV);
-    auto movingWall = std::make_shared<MovingYWall>(MARGIN, 1, 30, false);
+    auto movingWall = std::make_shared<MovingYWall>(MARGIN, 1, MOVINGV, false);
     auto pressureWall = std::make_shared<PressureCollectorYWall>(MAXY, -1);
     std::vector<std::shared_ptr<Boundary>> boundaries{
         std::make_shared<XWall>(MARGIN, 1),
@@ -340,9 +346,20 @@ int main()
     };
     Gas gas(N, dist, boundaries);
 
+    auto movingWall2 = std::make_shared<MovingYWall>(MARGIN, 1, MOVINGV, true);
+    auto pressureWall2 = std::make_shared<PressureCollectorYWall>(MAXY, -1);
+    std::vector<std::shared_ptr<Boundary>> boundaries2{
+        std::make_shared<XWall>(MARGIN, 1),
+        std::make_shared<XWall>(MAXX, -1),
+        pressureWall2,
+        movingWall2,
+    };
+    Gas gas2(N, dist, boundaries2);
+
     Graph graph(1300, MAXY, 3e3, MAXY, true);
 
     sf::Clock clock;
+    double p1, p2;
 
     while (window.isOpen())
     {
@@ -359,7 +376,21 @@ int main()
         for (auto& b: boundaries) {
             b->process(elapsed);
         }
-        graph.setPoint(0, pressureWall->pressure(), MAXY - movingWall->y());
+
+        gas2.process(elapsed);
+        for (auto& b: boundaries2) {
+            b->process(elapsed);
+        }
+
+        if (!movingWall->isMoving()) {
+            p1 = pressureWall->pressure();
+            p2 = pressureWall2->pressure();
+        } else {
+            graph.setPoint(0, pressureWall->pressure(), MAXY - movingWall->y());
+            graph.setPoint(1, pressureWall2->pressure(), MAXY - movingWall2->y());
+            graph.setPoint(2, p1 * (MAXY - MARGIN) / (MAXY - movingWall->y()), MAXY - movingWall->y());
+            graph.setPoint(3, p2 * std::pow((MAXY - MARGIN) / (MAXY - movingWall2->y()), 3), MAXY - movingWall2->y());
+        }
 
         window.clear();
         gas.draw(window);
@@ -367,6 +398,14 @@ int main()
             b->draw(window);
         }
         window.display();
+
+        window2.clear();
+        gas2.draw(window2);
+        for (auto& b: boundaries2) {
+            b->draw(window2);
+        }
+        window2.display();
+
         graph.draw();
     }
 
