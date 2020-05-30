@@ -12,6 +12,8 @@ struct Particle {
 class Boundary {
 public:
     virtual void interact(Particle& particle) = 0;
+    virtual void process() {}
+    virtual void draw(sf::RenderWindow& window) = 0;
 };
 
 class XWall : public Boundary {
@@ -25,6 +27,16 @@ public:
             p.vx *= -1;
         }
     }
+
+    void draw(sf::RenderWindow& window) override {
+        sf::Vertex line[] =
+        {
+            sf::Vertex(sf::Vector2f(x_, -1000)),
+            sf::Vertex(sf::Vector2f(x_, 1000))
+        };
+
+        window.draw(line, 2, sf::Lines);
+    };
 
 private:
     double x_;
@@ -42,6 +54,16 @@ public:
             p.vy *= -1;
         }
     }
+
+    void draw(sf::RenderWindow& window) override {
+        sf::Vertex line[] =
+        {
+            sf::Vertex(sf::Vector2f(-1000, y_)),
+            sf::Vertex(sf::Vector2f(1000, y_))
+        };
+
+        window.draw(line, 2, sf::Lines);
+    };
 
 private:
     double y_;
@@ -107,18 +129,20 @@ private:
 
 int main()
 {
+    const double MARGIN = 10;
     const double MAXX = 800;
     const double MAXY = 800;
     const double MAXV = 0.2;
-    sf::RenderWindow window(sf::VideoMode(MAXX, MAXY), "Gas");
+    sf::RenderWindow window(sf::VideoMode(MAXX + MARGIN, MAXY + MARGIN), "Gas");
 
     Distribution dist(0, 0, MAXX, MAXY, MAXV);
-    Gas gas(20, dist, {
-        std::make_shared<XWall>(0, 1),
+    std::vector<std::shared_ptr<Boundary>> boundaries{
+        std::make_shared<XWall>(MARGIN, 1),
         std::make_shared<XWall>(MAXX, -1),
-        std::make_shared<YWall>(0, 1),
+        std::make_shared<YWall>(MARGIN, 1),
         std::make_shared<YWall>(MAXY, -1),
-    });
+    };
+    Gas gas(20, dist, boundaries);
 
     while (window.isOpen())
     {
@@ -129,9 +153,15 @@ int main()
                 window.close();
         }
 
+        gas.process();
+        for (auto& b: boundaries) {
+            b->process();
+        }
         window.clear();
         gas.draw(window);
-        gas.process();
+        for (auto& b: boundaries) {
+            b->draw(window);
+        }
         window.display();
     }
 
