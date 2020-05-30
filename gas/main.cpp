@@ -89,6 +89,17 @@ public:
             window.draw(shape);
         }
     }
+
+    void process() {
+        for (auto& p : particles_) {
+            p.x += p.vx;
+            p.y += p.vy;
+            for (auto& b : boundaries_) {
+                b->interact(p);
+            }
+        }
+    }
+
 private:
     std::vector<std::shared_ptr<Boundary>> boundaries_;
     std::vector<Particle> particles_;
@@ -98,7 +109,7 @@ int main()
 {
     const double MAXX = 800;
     const double MAXY = 800;
-    const double MAXV = 2;
+    const double MAXV = 0.2;
     sf::RenderWindow window(sf::VideoMode(MAXX, MAXY), "Gas");
 
     Distribution dist(0, 0, MAXX, MAXY, MAXV);
@@ -120,6 +131,7 @@ int main()
 
         window.clear();
         gas.draw(window);
+        gas.process();
         window.display();
     }
 
