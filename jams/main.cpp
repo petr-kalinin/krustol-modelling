@@ -19,6 +19,7 @@
 #include <osmium/io/pbf_input.hpp>
 
 bool g_running = true;
+int g_rootId = -1;
 
 struct point {
     double x,y;
@@ -82,14 +83,13 @@ public:
         std::vector<sf::Vertex> line;
         RoadOptions options;
     };
-    Graph(int sx, int sy): window_(sx, sy, "Graph") {}
+    Graph(int sx, int sy): sx_(sx), sy_(sy), window_(sx, sy, "Graph") {}
     void draw() {
         window_.window().clear();
         for (const auto& pair: edges_) {
             for (const auto& pair2: pair.second) {
-                for (const auto& edge: pair2.second) {
-                    window_.window().draw(edge.line.data(), edge.line.size(), sf::LineStrip);
-                }
+                const auto& edge = pair2.second;
+                window_.window().draw(edge.line.data(), edge.line.size(), sf::LineStrip);
             }
         }
         window_.window().display();
@@ -97,18 +97,69 @@ public:
     void process() {
         window_.process();
     }
-private:
+    const std::set<int>& vertices() const { return vertices_; }
+    const std::map<int, std::map<int, Edge>>& edges() const { return edges_; }
     void addEdge(int u, int v, std::vector<sf::Vertex> line, RoadOptions options) {
         vertices_.insert(u);
         vertices_.insert(v);
-        edges_[u][v].push_back({u, v, line, options});
+        edges_[u][v] = {u, v, line, options};
         std::reverse(line.begin(), line.end());
-        edges_[v][u].push_back({v, u, line, options});
+        edges_[v][u] = {v, u, line, options};
     }
-    friend class OsmHandler;
-    std::map<int, std::map<int, std::vector<Edge>>> edges_;
+    void addEdge(const Edge& edge) {
+        addEdge(edge.from, edge.to, edge.line, edge.options);
+    }
+    int sx() const { return sx_; }
+    int sy() const { return sy_; }
+
+private:
+    int sx_, sy_;
+    std::map<int, std::map<int, Edge>> edges_;
     std::set<int> vertices_;
     Window window_;
+};
+
+class GraphCompacter {
+public:
+    GraphCompacter(const Graph& source): source_(source), result_(source_.sx(), source_.sy()) {}
+    Graph run(int startId) {
+        dfs(startId, -1, {-1, -1, {}, {}});
+        return std::move(result_);
+    }
+private:
+    void dfs(int vertex, int from, Graph::Edge edge) {
+        if (!source_.vertices().count(vertex)) {
+            std::cout << "Vertex " << vertex << " not found in source";
+        }
+        if (visited_.count(vertex)) {
+            result_.addEdge(edge);
+            return;
+        }
+        visited_.insert(vertex);
+        if (source_.edges().at(vertex).size() == 2) {
+            for (const auto& pair: source_.edges().at(vertex)) {
+                if (pair.first == from)
+                    continue;
+                if (edge.line.size())
+                    edge.line.pop_back();
+                edge.line.insert(edge.line.end(), pair.second.line.begin(), pair.second.line.end());
+                dfs(pair.first, vertex, edge);
+                return;
+            }
+        }
+        if (!edge.line.empty()) {
+            result_.addEdge(edge);
+        }
+        for (const auto& pair: source_.edges().at(vertex)) {
+            if (pair.first == from)
+                continue;
+            dfs(pair.first, vertex, pair.second);
+        }
+    }
+
+    std::set<int> visited_;
+    const Graph& source_;
+    Graph result_;
 };
 
 class OsmHandler {
@@ -162,6 +213,9 @@ public:
             if (!first && x > 0 && x < sx_ && y > 0 && y < sy_
                 && prev.position.x > 0 && prev.position.x < sx_ && prev.position.y > 0 && prev.position.y < sy_)
             {
+                if (type == "primary") {
+                    g_rootId = node.ref();
+                }
                 graph_.addEdge(prevId, node.ref(), {prev, vertex}, option->second);
             }
             first = false;
@@ -260,7 +314,11 @@ int main()
     sf::Clock clock;
     sf::Time totalTime;
 
-    Graph graph = load();
+    Graph graph0 = load();
+    GraphCompacter compacter(graph0);
+    Graph graph = compacter.run(g_rootId);
+    std::cout << "Initial graph =" << graph0.vertices().size() << std::endl;
+    std::cout << "Reduced graph =" << graph.vertices().size() << std::endl;
 
     while (g_running)
     {
