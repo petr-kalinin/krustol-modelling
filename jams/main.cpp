@@ -86,8 +86,10 @@ public:
     void draw() {
         window_.window().clear();
         for (const auto& pair: edges_) {
-            for (const auto& edge: pair.second) {
-                window_.window().draw(edge.line.data(), edge.line.size(), sf::LineStrip);
+            for (const auto& pair2: pair.second) {
+                for (const auto& edge: pair2.second) {
+                    window_.window().draw(edge.line.data(), edge.line.size(), sf::LineStrip);
+                }
             }
         }
         window_.window().display();
@@ -96,8 +98,15 @@ public:
         window_.process();
     }
 private:
+    void addEdge(int u, int v, std::vector<sf::Vertex> line, RoadOptions options) {
+        vertices_.insert(u);
+        vertices_.insert(v);
+        edges_[u][v].push_back({u, v, line, options});
+        std::reverse(line.begin(), line.end());
+        edges_[v][u].push_back({v, u, line, options});
+    }
     friend class OsmHandler;
-    std::map<int, std::vector<Edge>> edges_;
+    std::map<int, std::map<int, std::vector<Edge>>> edges_;
     std::set<int> vertices_;
     Window window_;
 };
@@ -140,29 +149,25 @@ public:
         auto option = OPTIONS.find(type);
         if (option == OPTIONS.end())
             return;
-        std::vector<sf::Vertex> edge;
-        bool good = true;
+        bool first =  true;
+        sf::Vertex prev;
+        int prevId;
         for (const auto& node: way.nodes()) {
             if (!node.location())
                 continue;
             point p = proj_.transform({node.lon(), node.lat()});
-            if (p.x < minmax_.minx || p.x > minmax_.maxx || p.y < minmax_.miny || p.y > minmax_.maxy) {
-                good = false;
-                break;
-            }
             double x = scale_ * (p.x-minmax_.minx);
             double y = scale_ * (minmax_.maxy-p.y);
-            edge.emplace_back(sf::Vector2f(x, y));
+            sf::Vertex vertex(sf::Vector2f(x, y));
+            if (!first && x > 0 && x < sx_ && y > 0 && y < sy_
+                && prev.position.x > 0 && prev.position.x < sx_ && prev.position.y > 0 && prev.position.y < sy_)
+            {
+                graph_.addEdge(prevId, node.ref(), {prev, vertex}, option->second);
+            }
+            first = false;
+            prev = vertex;
+            prevId = node.ref();
         }
-        if (!good) {
-            return;
-        }
-        int u = way.nodes().front().ref();
-        int v = way.nodes().back().ref();
-        graph_.vertices_.insert(u);
-        graph_.vertices_.insert(v);
-        graph_.edges_[u].push_back({u, v, edge, option->second});
-        graph_.edges_[v].push_back({v, u, edge, option->second});
     }
     Graph graph() { return std::move(graph_); }
 private:
