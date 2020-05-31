@@ -78,13 +78,18 @@ class BaseCar {
 public:
     virtual void process(const sf::Time& elapsed) = 0;
     virtual void draw(sf::RenderWindow& window) = 0;
+    virtual bool finished() const = 0;
 };
 
 class Graph {
 public:
     struct RoadOptions {
-        RoadOptions() {}
+        RoadOptions(double vmax = -1, int lanes = -1) : vmax(vmax), lanes(lanes) {}
+        RoadOptions(const RoadOptions&) = default;
+        RoadOptions& operator=(const RoadOptions&) = default;
         double length;
+        double vmax;
+        int lanes;
     };
     struct Edge {
         int from, to;
@@ -110,6 +115,7 @@ public:
         for (auto& car: cars_) {
             car->process(elapsed);
         }
+        cars_.erase(std::remove_if(cars_.begin(), cars_.end(), [](const std::unique_ptr<BaseCar>& c) { return c->finished(); }), cars_.end());
     }
     const std::map<int, sf::Vertex>& vertices() const { return vertices_; }
     const std::map<int, std::map<int, Edge>>& edges() const { return edges_; }
@@ -130,6 +136,9 @@ public:
     void addCar(std::unique_ptr<BaseCar> car) {
         cars_.emplace_back(std::move(car));
     }
+    int carsCount() {
+        return cars_.size();
+    }
     int sx() const { return sx_; }
     int sy() const { return sy_; }
     Window& window() { return window_; }
@@ -146,7 +155,7 @@ class GraphCompacter {
 public:
     GraphCompacter(const Graph& source): source_(source), result_(source_.sx(), source_.sy()) {}
     Graph run(int startId) {
-        dfs(startId, -1, {-1, -1, {}, {}});
+        dfs(startId, -1, {-1, -1, {}, {-1, -1}});
         return std::move(result_);
     }
 private:
@@ -209,7 +218,7 @@ public:
             int curv = p.second;
             for (const auto& pair: graph_.edges().at(curv)) {
                 int newV = pair.first;
-                int newD = infos[curv].d + pair.second.options.length * FACTOR;
+                int newD = infos[curv].d + pair.second.options.length / pair.second.options.vmax * FACTOR;
                 if (!infos.count(newV)) {
                     infos[newV] = {newD, curv};
                     q.emplace(newD, newV);
@@ -238,7 +247,7 @@ protected:
 };
 
 class Car : public BaseCar {
-static const constexpr double VFACTOR = 5;
+static const constexpr double VFACTOR = 0.3;
 static const constexpr int RADIUS = 3;
 public:
     Car(const Graph& graph, int from, int to): graph_(graph) {
@@ -255,7 +264,7 @@ public:
         int from = path_[index_];
         int to = path_[index_ + 1];
         const auto& edge = graph_.edges().at(from).at(to);
-        double v = VFACTOR;
+        double v = VFACTOR * edge.options.vmax;
         edgePart_ += v * elapsed.asSeconds();
         if (edgePart_ > edge.options.length) {
             index_++;
@@ -281,7 +290,10 @@ public:
         shape.setFillColor(sf::Color::Green);
         window.draw(shape);
         }
+    }
 
+    bool finished() const override {
+        return index_ >= path_.size() - 1;
     }
 
     sf::Vertex getPosition() {
@@ -311,22 +323,43 @@ private:
     double edgePart_;
 };
 
+class CarGenerator {
+public:
+    CarGenerator(const Graph& graph) : graph_(graph), gen_(time(0)), dist_(0, graph.vertices().size() - 1) {
+        ids_.reserve(graph.vertices().size());
+        for (const auto& v: graph.vertices()) {
+            ids_.push_back(v.first);
+        }
+    }
+    std::unique_ptr<Car> generate() {
+        return std::make_unique<Car>(graph_, randomVertex(), randomVertex());
+    }
+    int randomVertex() {
+        return ids_[dist_(gen_)];
+    }
+private:
+    const Graph& graph_;
+    std::vector<int> ids_;
+    std::mt19937 gen_;
+    std::uniform_int_distribution<int> dist_;
+};
+
 class OsmHandler {
     std::map<std::string, Graph::RoadOptions> OPTIONS{
-        {"motorway", {}},
-        {"motorway_link", {}},
-        {"trunk", {}},
-        {"trunk_link", {}},
-        {"primary", {}},
-        {"primary_link", {}},
-        {"secondary", {}},
-        {"secondary_link", {}},
-        {"tertiary", {}},
-        {"tertiary_link", {}},
-        {"unclassified", {}},
+        {"motorway", {110, 3}},
+        {"motorway_link", {90, 3}},
+        {"trunk", {90, 2}},
+        {"trunk_link", {90, 2}},
+        {"primary", {60, 2}},
+        {"primary_link", {60, 2}},
+        {"secondary", {60, 2}},
+        {"secondary_link", {60, 1}},
+        {"tertiary", {45, 1}},
+        {"tertiary_link", {45, 1}},
+        {"unclassified", {30, 1}},
         //{"residential", {}}//,
         //{"service", {BASE_WIDTH, RoadType::SIDE}}
-        {"foo", {}}
+        {"foo", {0, 0}}
     };
 public:
     OsmHandler(const Projector& proj, const MinMax& minmax, int sx, int sy) : graph_(sx, sy), proj_(proj), minmax_(minmax), sx_(sx), sy_(sy), scale_(sx/(minmax_.maxx - minmax_.minx)) {}
@@ -460,16 +493,18 @@ Graph load() {
 
 int main()
 {
+    static const int CARS = 3;
     sf::Clock clock;
     sf::Time totalTime;
 
     Graph graph0 = load();
     GraphCompacter compacter(graph0);
     Graph graph = compacter.run(g_rootId);
+
     std::cout << "Initial graph =" << graph0.vertices().size() << std::endl;
     std::cout << "Reduced graph =" << graph.vertices().size() << std::endl;
 
-    graph.addCar(std::make_unique<Car>(graph, graph.vertices().begin()->first, graph.vertices().rbegin()->first));
+    CarGenerator generator(graph);
 
     std::cout << "Start!";
 
@@ -478,8 +513,11 @@ int main()
         sf::Time elapsed = clock.restart();
         totalTime += elapsed;
 
-        graph.process(elapsed);
+        while (graph.carsCount() < CARS) {
+            graph.addCar(generator.generate());
+        }
 
+        graph.process(elapsed);
         graph.draw();
     }
 
