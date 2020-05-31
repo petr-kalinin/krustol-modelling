@@ -74,10 +74,18 @@ private:
 };
 
 class OsmHandler;
+class BaseCar {
+public:
+    virtual void process(const sf::Time& elapsed) = 0;
+    virtual void draw(sf::RenderWindow& window) = 0;
+};
 
 class Graph {
 public:
-    struct RoadOptions {};
+    struct RoadOptions {
+        RoadOptions() {}
+        double length;
+    };
     struct Edge {
         int from, to;
         std::vector<sf::Vertex> line;
@@ -92,16 +100,26 @@ public:
                 window_.window().draw(edge.line.data(), edge.line.size(), sf::LineStrip);
             }
         }
+        for (const auto& car: cars_) {
+            car->draw(window_.window());
+        }
         window_.window().display();
     }
-    void process() {
+    void process(const sf::Time& elapsed) {
         window_.process();
+        for (auto& car: cars_) {
+            car->process(elapsed);
+        }
     }
-    const std::set<int>& vertices() const { return vertices_; }
+    const std::map<int, sf::Vertex>& vertices() const { return vertices_; }
     const std::map<int, std::map<int, Edge>>& edges() const { return edges_; }
     void addEdge(int u, int v, std::vector<sf::Vertex> line, RoadOptions options) {
-        vertices_.insert(u);
-        vertices_.insert(v);
+        options.length = 0;
+        for (int i = 1; i < line.size(); i++) {
+            options.length += std::hypot(line[i].position.x - line[i-1].position.x, line[i].position.y - line[i-1].position.y);
+        }
+        vertices_[u] = line.front();
+        vertices_[v] = line.back();
         edges_[u][v] = {u, v, line, options};
         std::reverse(line.begin(), line.end());
         edges_[v][u] = {v, u, line, options};
@@ -109,14 +127,19 @@ public:
     void addEdge(const Edge& edge) {
         addEdge(edge.from, edge.to, edge.line, edge.options);
     }
+    void addCar(std::unique_ptr<BaseCar> car) {
+        cars_.emplace_back(std::move(car));
+    }
     int sx() const { return sx_; }
     int sy() const { return sy_; }
+    Window& window() { return window_; }
 
 private:
     int sx_, sy_;
     std::map<int, std::map<int, Edge>> edges_;
-    std::set<int> vertices_;
+    std::map<int, sf::Vertex> vertices_;
     Window window_;
+    std::vector<std::unique_ptr<BaseCar>> cars_;
 };
 
 class GraphCompacter {
@@ -132,6 +155,7 @@ private:
             std::cout << "Vertex " << vertex << " not found in source";
         }
         if (visited_.count(vertex)) {
+            edge.to = vertex;
             result_.addEdge(edge);
             return;
         }
@@ -148,6 +172,7 @@ private:
             }
         }
         if (!edge.line.empty()) {
+            edge.to = vertex;
             result_.addEdge(edge);
         }
         for (const auto& pair: source_.edges().at(vertex)) {
@@ -160,6 +185,130 @@ private:
     std::set<int> visited_;
     const Graph& source_;
     Graph result_;
+};
+
+class Algorithm {
+    struct Info {
+        int d;
+        int from;
+    };
+    static const constexpr double FACTOR = 1e3;
+public:
+    Algorithm(const Graph& graph): graph_(graph) {}
+    std::vector<int> getPath(int from, int to) {
+        //return {from, to};
+        graph_.vertices().at(from);
+        graph_.vertices().at(to);
+        std::set<std::pair<int, int>> q;
+        std::map<int, Info> infos;
+        q.emplace(0, from);
+        infos[from] = {0, -1};
+        while (!q.empty()) {
+            auto p = *q.begin();
+            q.erase(q.begin());
+            int curv = p.second;
+            for (const auto& pair: graph_.edges().at(curv)) {
+                int newV = pair.first;
+                int newD = infos[curv].d + pair.second.options.length * FACTOR;
+                if (!infos.count(newV)) {
+                    infos[newV] = {newD, curv};
+                    q.emplace(newD, newV);
+                    continue;
+                }
+                double oldD = infos[newV].d;
+                if (oldD <= newD)
+                    continue;
+                q.erase({oldD, newV});
+                q.emplace(newD, newV);
+                infos[newV].d = newD;
+                infos[newV].from = curv;
+            }
+        }
+        std::vector<int> result;
+        int curV = to;
+        while (curV != from) {
+            result.push_back(curV);
+            curV = infos.at(curV).from;
+        }
+        result.push_back(curV);
+        return result;
+    };
+protected:
+    const Graph& graph_;
+};
+
+class Car : public BaseCar {
+static const constexpr double VFACTOR = 5;
+static const constexpr int RADIUS = 3;
+public:
+    Car(const Graph& graph, int from, int to): graph_(graph) {
+        Algorithm algo(graph_);
+        path_ = algo.getPath(from, to);
+        index_ = 0;
+        edgePart_ = 0;
+    }
+
+    void process(const sf::Time& elapsed) {
+        if (index_ >= path_.size() - 1) {
+            return;
+        }
+        int from = path_[index_];
+        int to = path_[index_ + 1];
+        const auto& edge = graph_.edges().at(from).at(to);
+        double v = VFACTOR;
+        edgePart_ += v * elapsed.asSeconds();
+        if (edgePart_ > edge.options.length) {
+            index_++;
+            edgePart_ = 0;
+        }
+    }
+
+    void draw(sf::RenderWindow& window) {
+        for (const auto& id: path_) { // {path_.front(), path_.back()}) {
+            sf::CircleShape shape(RADIUS);
+            auto start = graph_.vertices().at(id).position;
+            shape.setPosition(start.x - RADIUS, start.y - RADIUS);
+            shape.setFillColor(sf::Color::Red);
+            window.draw(shape);
+        }
+        if (index_ >= path_.size() - 1) {
+            return;
+        }
+        {
+        sf::Vertex position = getPosition();
+        sf::CircleShape shape(RADIUS);
+        shape.setPosition(position.position.x - RADIUS, position.position.y - RADIUS);
+        shape.setFillColor(sf::Color::Green);
+        window.draw(shape);
+        }
+
+    }
+
+    sf::Vertex getPosition() {
+        int from = path_[index_];
+        int to = path_[index_ + 1];
+        const auto& edge = graph_.edges().at(from).at(to);
+
+        double passed = edgePart_;
+        for (int i = 0; i < edge.line.size() - 1; i++) {
+            double len = std::hypot(edge.line[i+1].position.x - edge.line[i].position.x,
+                                    edge.line[i+1].position.y - edge.line[i].position.y);
+            passed -= len;
+            if (passed < 0) {
+                double frac = -passed / len;
+                double x = edge.line[i+1].position.x * (1 - frac) + edge.line[i].position.x * frac;
+                double y = edge.line[i+1].position.y * (1 - frac) + edge.line[i].position.y * frac;
+                return {sf::Vector2f(x, y)};
+            }
+        }
+        return edge.line.back();
+    }
+
+private:
+    const Graph& graph_;
+    std::vector<int> path_;
+    int index_;
+    double edgePart_;
 };
 
 class OsmHandler {
@@ -320,29 +469,18 @@ int main()
     std::cout << "Initial graph =" << graph0.vertices().size() << std::endl;
     std::cout << "Reduced graph =" << graph.vertices().size() << std::endl;
 
+    graph.addCar(std::make_unique<Car>(graph, graph.vertices().begin()->first, graph.vertices().rbegin()->first));
+
+    std::cout << "Start!";
+
     while (g_running)
     {
         sf::Time elapsed = clock.restart();
         totalTime += elapsed;
 
-        graph.draw();
-        graph.process();
-        /*
-        window.clear();
-        gas.draw(window);
-        for (auto& b: boundaries) {
-            b->draw(window);
-        }
-        gas2.draw(window);
-        for (auto& b: boundaries2) {
-            b->draw(window);
-        }
-        window.display();
+        graph.process(elapsed);
 
         graph.draw();
-
-        graph2.draw();
-        */
     }
 
     return 0;
