@@ -491,16 +491,17 @@ Graph load() {
     return handler.graph();
 }
 
+Graph loadAndCompact() {
+    Graph graph0 = load();
+    GraphCompacter compacter(graph0);
+    return compacter.run(g_rootId);
+}
+
 int main()
 {
     static const int CARS = 3;
 
-    Graph graph0 = load();
-    GraphCompacter compacter(graph0);
-    Graph graph = compacter.run(g_rootId);
-
-    std::cout << "Initial graph =" << graph0.vertices().size() << std::endl;
-    std::cout << "Reduced graph =" << graph.vertices().size() << std::endl;
+    Graph graph = loadAndCompact();
 
     CarGenerator generator(graph);
 
