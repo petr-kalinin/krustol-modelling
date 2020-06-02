@@ -80,6 +80,8 @@ public:
     virtual void draw(sf::RenderWindow& window) = 0;
     virtual bool finished() const = 0;
     virtual double v() const = 0;
+    virtual bool jams() const = 0;
+    virtual bool update() const = 0;
 };
 
 class Graph {
@@ -93,10 +95,16 @@ public:
         int lanes;
     };
     struct State {
-        State() : cars{}, sumTime(0), sumCnt(0) {}
+        static const constexpr double LAMBDA = 0.2;
+        State() : cars{}, sumV(0), sumCnt(0) {}
         std::vector<BaseCar*> cars;
-        double sumTime;
+        double sumV;
         double sumCnt;
+        double v() { return (sumV + 60*0.01) / (sumCnt + 0.01); }
+        void addV(double v) {
+            sumV = sumV * (1 - LAMBDA) + v;
+            sumCnt = sumCnt * (1 - LAMBDA) + 1;
+        }
     };
     struct Edge {
         int from, to;
@@ -107,9 +115,14 @@ public:
     Graph(int sx, int sy): sx_(sx), sy_(sy), window_(sx, sy, "Graph") {}
     void draw() {
         window_.window().clear();
-        for (const auto& pair: edges_) {
-            for (const auto& pair2: pair.second) {
-                const auto& edge = pair2.second;
+        for (auto& pair: edges_) {
+            for (auto& pair2: pair.second) {
+                auto& edge = pair2.second;
+                double v = edge.state.v();
+                sf::Color color(255, v / 60 * 255, v / 60 * 255);
+                for (auto& p : edge.line) {
+                    p.color = color;
+                }
                 window_.window().draw(edge.line.data(), edge.line.size(), sf::LineStrip);
             }
         }
@@ -219,7 +232,7 @@ class Algorithm {
     };
     static const constexpr double FACTOR = 1e3;
 public:
-    Algorithm(const Graph& graph): graph_(graph) {}
+    Algorithm(const Graph& graph, bool jams): graph_(graph), jams_(jams) {}
     std::vector<int> getPath(int from, int to) {
         //return {from, to};
         graph_.vertices().at(from);
@@ -234,7 +247,11 @@ public:
             int curv = p.second;
             for (const auto& pair: graph_.edges().at(curv)) {
                 int newV = pair.first;
-                int newD = infos[curv].d + pair.second.options.length / pair.second.options.vmax * FACTOR;
+                double v = pair.second.options.vmax;
+                if (jams_) {
+                    v = std::min(v, pair.second.state.v());
+                }
+                int newD = infos[curv].d + pair.second.options.length / v * FACTOR;
                 if (!infos.count(newV)) {
                     infos[newV] = {newD, curv};
                     q.emplace(newD, newV);
@@ -256,10 +273,12 @@ public:
             curV = infos.at(curV).from;
         }
         result.push_back(curV);
+        std::reverse(result.begin(), result.end());
         return result;
     };
 protected:
     const Graph& graph_;
+    bool jams_;
 };
 
 class Car : public BaseCar {
@@ -267,8 +286,8 @@ static const constexpr double VFACTOR = 0.3;
 static const constexpr int RADIUS = 5;
 static const constexpr double LENGTH = 15;
 public:
-    Car(const Graph& graph, int from, int to): graph_(graph) {
-        Algorithm algo(graph_);
+    Car(const Graph& graph, int from, int to, bool jams, bool update): graph_(graph), to_(to), jams_(jams), update_(jams && update) {
+        Algorithm algo(graph_, jams_);
         path_ = algo.getPath(from, to);
         index_ = 0;
         edgePart_ = -1;
@@ -284,6 +303,14 @@ public:
         if (edgePart_ < 0) {
             edgePart_ = 0;
             edge.state.cars.push_back(this);
+            if (update_ && jams_) {
+                Algorithm algo(graph_, jams_);
+                path_ = algo.getPath(to, to_);
+                path_.insert(path_.begin(), from);
+                index_ = 0;
+                assert(path_[index_] == from);
+                assert(path_[index_ + 1] == to);
+            }
         }
         int position = std::find(edge.state.cars.begin(), edge.state.cars.end(), this) - edge.state.cars.begin();
         double jam = (position - 1) * LENGTH / edge.options.lanes;
@@ -292,6 +319,7 @@ public:
             jammed_ = true;
             timeSinceJammed_ = sf::seconds(0);
             v_ = 0;
+            edge.state.addV(0);
             return;
         }
         jammed_ = false;
@@ -307,6 +335,7 @@ public:
                     timeSinceJammed_ = sf::seconds(0);
                     jammed_ = true;
                     v_ = 0;
+                    edge.state.addV(0);
                     return;
                 }
             }
@@ -317,6 +346,7 @@ public:
         }
         timeSinceJammed_ += elapsed;
         v_ = edge.options.vmax;
+        edge.state.addV(v_);
     }
 
     void draw(sf::RenderWindow& window) {
@@ -337,10 +367,17 @@ public:
         double r = 3;
         sf::CircleShape shape(r);
         shape.setPosition(position.position.x - r, position.position.y - r);
-        if (jammed_)
-            shape.setFillColor(sf::Color::Red);
-        else
-            shape.setFillColor(sf::Color::Green);
+        if (jams_) {
+            if (jammed_)
+                shape.setFillColor(sf::Color::Yellow);
+            else
+                shape.setFillColor(sf::Color::Cyan);
+        } else {
+            if (jammed_)
+                shape.setFillColor(sf::Color::Red);
+            else
+                shape.setFillColor(sf::Color::Green);
+        }
         window.draw(shape);
         }
     }
@@ -370,27 +407,34 @@ public:
     }
 
     double v() const override { return v_; }
+    bool jams() const override { return jams_; }
+    bool update() const override { return update_; }
 
 private:
     const Graph& graph_;
+    int to_;
     std::vector<int> path_;
     int index_;
     double edgePart_;
     bool jammed_ = false;
     sf::Time timeSinceJammed_ = sf::seconds(100);
     double v_ = 0;
+    bool jams_;
+    bool update_;
 };
 
 class CarGenerator {
+    static const constexpr double JAMS_FRACTION = 0.2;
+    static const constexpr double UPDATE_FRACTION = 0.5;
 public:
-    CarGenerator(const Graph& graph) : graph_(graph), gen_(time(0)), dist_(0, graph.vertices().size() - 1) {
+    CarGenerator(const Graph& graph) : graph_(graph), gen_(time(0)), dist_(0, graph.vertices().size() - 1), jams_(0, 1) {
         ids_.reserve(graph.vertices().size());
         for (const auto& v: graph.vertices()) {
             ids_.push_back(v.first);
         }
     }
     std::unique_ptr<Car> generate() {
-        return std::make_unique<Car>(graph_, randomVertex(), randomVertex());
+        return std::make_unique<Car>(graph_, randomVertex(), randomVertex(), jams_(gen_) < JAMS_FRACTION, jams_(gen_) < UPDATE_FRACTION);
     }
     int randomVertex() {
         return ids_[dist_(gen_)];
@@ -400,6 +444,7 @@ private:
     std::vector<int> ids_;
     std::mt19937 gen_;
     std::uniform_int_distribution<int> dist_;
+    std::uniform_real_distribution<double> jams_;
 };
 
 class OsmHandler {
@@ -415,8 +460,8 @@ class OsmHandler {
         {"tertiary", {45, 1}},
         {"tertiary_link", {45, 1}},
         {"unclassified", {30, 1}},
-        //{"residential", {}}//,
-        //{"service", {BASE_WIDTH, RoadType::SIDE}}
+        //{"residential", {30, 1}},
+        //{"service", {BASE_WIDTH, RoadType::SIDE}},
         {"foo", {0, 0}}
     };
 public:
@@ -577,7 +622,7 @@ int main()
         sf::Time elapsed = clock.restart();
         totalTime += elapsed;
 
-        cars = totalTime.asSeconds() * 40;
+        cars = totalTime.asSeconds() * 10;
 
         while (graph.carsCount() < cars) {
             graph.addCar(generator.generate());
@@ -587,11 +632,26 @@ int main()
         graph.draw();
 
         double sumV = 0;
+        double sumVJ = 0;
+        double sumVU = 0;
+        int cnt = 0;
+        int cntJ = 0;
+        int cntU = 0;
         for (const auto& car: graph.cars()) {
-            sumV += car->v();
+            if (car->update()) {
+                sumVU += car->v();
+                cntU++;
+            } else if (car->jams()) {
+                sumVJ += car->v();
+                cntJ++;
+            } else {
+                sumV += car->v();
+                cnt++;
+            }
         }
-        double avgV = sumV / cars;
-        plot.setPoint(0, cars, avgV);
+        plot.setPoint(0, cars, sumV / (cnt + 0.01));
+        plot.setPoint(1, cars, sumVJ / (cntJ + 0.01));
+        plot.setPoint(2, cars, sumVU / (cntU + 0.01));
 
         plot.draw();
     }
