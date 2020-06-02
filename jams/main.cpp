@@ -564,11 +564,11 @@ int main()
 
     CarGenerator generator(graph);
 
+    Plot plot(800, 800, 4000, 60, true);
+
     int x;
     std::cin >> x;
     std::cout << "Start!";
-
-    Plot plot(800, 800, 4000, 60, true);
 
     sf::Clock clock;
     sf::Time totalTime = sf::seconds(0);
