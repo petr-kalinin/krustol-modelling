@@ -494,8 +494,6 @@ Graph load() {
 int main()
 {
     static const int CARS = 3;
-    sf::Clock clock;
-    sf::Time totalTime;
 
     Graph graph0 = load();
     GraphCompacter compacter(graph0);
@@ -506,8 +504,12 @@ int main()
 
     CarGenerator generator(graph);
 
+    int x;
+    std::cin >> x;
     std::cout << "Start!";
 
+    sf::Clock clock;
+    sf::Time totalTime;
     while (g_running)
     {
         sf::Time elapsed = clock.restart();
