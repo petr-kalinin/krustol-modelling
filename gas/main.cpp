@@ -358,6 +358,9 @@ int main()
 
     Graph graph(1300, MAXY, 3e3, MAXY, true);
 
+    int x;
+    std::cin >> x;
+
     sf::Clock clock;
     double p1, p2;
 
