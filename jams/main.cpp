@@ -79,6 +79,7 @@ public:
     virtual void process(const sf::Time& elapsed) = 0;
     virtual void draw(sf::RenderWindow& window) = 0;
     virtual bool finished() const = 0;
+    virtual double v() const = 0;
 };
 
 class Graph {
@@ -91,10 +92,17 @@ public:
         double vmax;
         int lanes;
     };
+    struct State {
+        State() : cars{}, sumTime(0), sumCnt(0) {}
+        std::vector<BaseCar*> cars;
+        double sumTime;
+        double sumCnt;
+    };
     struct Edge {
         int from, to;
         std::vector<sf::Vertex> line;
         RoadOptions options;
+        mutable State state;
     };
     Graph(int sx, int sy): sx_(sx), sy_(sy), window_(sx, sy, "Graph") {}
     void draw() {
@@ -116,6 +124,13 @@ public:
             car->process(elapsed);
         }
         cars_.erase(std::remove_if(cars_.begin(), cars_.end(), [](const std::unique_ptr<BaseCar>& c) { return c->finished(); }), cars_.end());
+        int nocc = 0;
+        for (const auto& pair: edges_) {
+            for (const auto& pair2: pair.second) {
+                const auto& edge = pair2.second;
+                nocc += edge.state.cars.size();
+            }
+        }
     }
     const std::map<int, sf::Vertex>& vertices() const { return vertices_; }
     const std::map<int, std::map<int, Edge>>& edges() const { return edges_; }
@@ -139,6 +154,7 @@ public:
     int carsCount() {
         return cars_.size();
     }
+    const std::vector<std::unique_ptr<BaseCar>>& cars() { return cars_; }
     int sx() const { return sx_; }
     int sy() const { return sy_; }
     Window& window() { return window_; }
@@ -248,13 +264,14 @@ protected:
 
 class Car : public BaseCar {
 static const constexpr double VFACTOR = 0.3;
-static const constexpr int RADIUS = 3;
+static const constexpr int RADIUS = 5;
+static const constexpr double LENGTH = 15;
 public:
     Car(const Graph& graph, int from, int to): graph_(graph) {
         Algorithm algo(graph_);
         path_ = algo.getPath(from, to);
         index_ = 0;
-        edgePart_ = 0;
+        edgePart_ = -1;
     }
 
     void process(const sf::Time& elapsed) {
@@ -264,30 +281,66 @@ public:
         int from = path_[index_];
         int to = path_[index_ + 1];
         const auto& edge = graph_.edges().at(from).at(to);
+        if (edgePart_ < 0) {
+            edgePart_ = 0;
+            edge.state.cars.push_back(this);
+        }
+        int position = std::find(edge.state.cars.begin(), edge.state.cars.end(), this) - edge.state.cars.begin();
+        double jam = (position - 1) * LENGTH / edge.options.lanes;
+
+        if (edgePart_ + jam > edge.options.length && edgePart_ + LENGTH < edge.options.length) {
+            jammed_ = true;
+            timeSinceJammed_ = sf::seconds(0);
+            v_ = 0;
+            return;
+        }
+        jammed_ = false;
         double v = VFACTOR * edge.options.vmax;
         edgePart_ += v * elapsed.asSeconds();
         if (edgePart_ > edge.options.length) {
+            if (index_ != path_.size() - 2) {
+                int toto = path_[index_ + 2];
+                const auto& edge2 = graph_.edges().at(to).at(toto);
+                double jam2 = edge2.state.cars.size() * LENGTH / edge2.options.lanes;
+                if (edge2.state.cars.size() && jam2 > edge2.options.length) {
+                    edgePart_ -= v * elapsed.asSeconds();
+                    timeSinceJammed_ = sf::seconds(0);
+                    jammed_ = true;
+                    v_ = 0;
+                    return;
+                }
+            }
+            auto it = std::find(edge.state.cars.begin(), edge.state.cars.end(), this);
+            edge.state.cars.erase(it);
             index_++;
-            edgePart_ = 0;
+            edgePart_ = -1;
         }
+        timeSinceJammed_ += elapsed;
+        v_ = edge.options.vmax;
     }
 
     void draw(sf::RenderWindow& window) {
-        for (const auto& id: path_) { // {path_.front(), path_.back()}) {
+        /*for (const auto& id: {path_.front(), path_.back()}) {
             sf::CircleShape shape(RADIUS);
             auto start = graph_.vertices().at(id).position;
             shape.setPosition(start.x - RADIUS, start.y - RADIUS);
-            shape.setFillColor(sf::Color::Red);
+            shape.setFillColor(sf::Color::Cyan);
             window.draw(shape);
-        }
+        }*/
         if (index_ >= path_.size() - 1) {
             return;
         }
         {
         sf::Vertex position = getPosition();
-        sf::CircleShape shape(RADIUS);
-        shape.setPosition(position.position.x - RADIUS, position.position.y - RADIUS);
-        shape.setFillColor(sf::Color::Green);
+        //double r = RADIUS * (3 - timeSinceJammed_.asSeconds()) / 3;
+        //if (r < 1) r = 1;
+        double r = 3;
+        sf::CircleShape shape(r);
+        shape.setPosition(position.position.x - r, position.position.y - r);
+        if (jammed_)
+            shape.setFillColor(sf::Color::Red);
+        else
+            shape.setFillColor(sf::Color::Green);
         window.draw(shape);
         }
     }
@@ -316,11 +369,16 @@ public:
         return edge.line.back();
     }
 
+    double v() const override { return v_; }
+
 private:
     const Graph& graph_;
     std::vector<int> path_;
     int index_;
     double edgePart_;
+    bool jammed_ = false;
+    sf::Time timeSinceJammed_ = sf::seconds(100);
+    double v_ = 0;
 };
 
 class CarGenerator {
@@ -346,13 +404,13 @@ private:
 
 class OsmHandler {
     std::map<std::string, Graph::RoadOptions> OPTIONS{
-        {"motorway", {110, 3}},
-        {"motorway_link", {90, 3}},
-        {"trunk", {90, 2}},
-        {"trunk_link", {90, 2}},
-        {"primary", {60, 2}},
-        {"primary_link", {60, 2}},
-        {"secondary", {60, 2}},
+        {"motorway", {110, 2}},
+        {"motorway_link", {90, 2}},
+        {"trunk", {90, 1}},
+        {"trunk_link", {90, 1}},
+        {"primary", {60, 1}},
+        {"primary_link", {60, 1}},
+        {"secondary", {60, 1}},
         {"secondary_link", {60, 1}},
         {"tertiary", {45, 1}},
         {"tertiary_link", {45, 1}},
@@ -422,6 +480,7 @@ public:
 
     void setPoint(int line, double x, double y) {
         points_[line].emplace_back(sf::Vector2f(x / maxx_ * sx_, sy_ - y / maxy_ * sy_), colors_[line]);
+        auto p = points_[line].back().position;
     }
 
     void draw() {
@@ -499,7 +558,7 @@ Graph loadAndCompact() {
 
 int main()
 {
-    static const int CARS = 3;
+    int cars = 0;
 
     Graph graph = loadAndCompact();
 
@@ -509,19 +568,32 @@ int main()
     std::cin >> x;
     std::cout << "Start!";
 
+    Plot plot(800, 800, 4000, 60, true);
+
     sf::Clock clock;
-    sf::Time totalTime;
+    sf::Time totalTime = sf::seconds(0);
     while (g_running)
     {
         sf::Time elapsed = clock.restart();
         totalTime += elapsed;
 
-        while (graph.carsCount() < CARS) {
+        cars = totalTime.asSeconds() * 40;
+
+        while (graph.carsCount() < cars) {
             graph.addCar(generator.generate());
         }
 
         graph.process(elapsed);
         graph.draw();
+
+        double sumV = 0;
+        for (const auto& car: graph.cars()) {
+            sumV += car->v();
+        }
+        double avgV = sumV / cars;
+        plot.setPoint(0, cars, avgV);
+
+        plot.draw();
     }
 
     return 0;
