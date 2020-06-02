@@ -258,8 +258,8 @@ private:
 
 class Graph {
 public:
-    Graph(int sx, int sy, double maxx, double maxy, bool permanent) :
-        sx_(sx), sy_(sy), maxx_(maxx), maxy_(maxy), permanent_(permanent), window_(sf::VideoMode(sx, sy), "Plot"), colors_{sf::Color::White, sf::Color::Red, sf::Color::Green, sf::Color::Cyan}, points_(colors_.size())
+    Graph(int sx, int sy, double maxx, double maxy, bool permanent, std::string name) :
+        sx_(sx), sy_(sy), maxx_(maxx), maxy_(maxy), permanent_(permanent), window_(sf::VideoMode(sx, sy), name.c_str()), colors_{sf::Color::White, sf::Color::Red, sf::Color::Green, sf::Color::Cyan}, points_(colors_.size())
     {}
 
     void setPoint(int line, double x, double y) {
@@ -391,8 +391,11 @@ int main()
     };
     Gas gas2(N, dist2, boundaries2);
 
-    Graph graph(1300, MAXY, 3e3, MAXY, true);
-    Graph graph2(1300, MAXY, 3e3, MAXV * MAXV, true);
+    Graph graph(1000, MAXY / 2, 3e3, MAXY, true, "Plot");
+    Graph graph2(1000, MAXY / 2, 3e3, MAXV * MAXV, true, "Plot-e");
+
+    int x;
+    std::cin >> x;
 
     sf::Clock clock;
     sf::Time totalTime;
@@ -426,6 +429,7 @@ int main()
 
         graph2.setPoint(0, totalTime.asSeconds() * 30, gas.energy());
         graph2.setPoint(1, totalTime.asSeconds() * 30, gas2.energy());
+        graph2.setPoint(2, totalTime.asSeconds() * 30, 0);
 
         window.clear();
         gas.draw(window);
