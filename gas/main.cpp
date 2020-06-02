@@ -268,7 +268,7 @@ int main()
     const double MAXV = 300;
     const int N = 1000;
     const int BINS = 100;
-    sf::RenderWindow window(sf::VideoMode(MAXX + 10 * MARGIN, MAXY + MARGIN), "Gas");
+    sf::RenderWindow window(sf::VideoMode(MAXX + MARGIN, MAXY + MARGIN), "Gas");
 
     Distribution dist(0, 0, MAXX, MAXY, MAXV);
     std::vector<std::shared_ptr<Boundary>> boundaries{
@@ -279,9 +279,11 @@ int main()
     };
     Gas gas(N, dist, boundaries);
 
-    Graph graph(1300, 800, BINS, 1, false);
+    Graph graph(800, 800, BINS, 1, false);
     StatCollector statCollector(gas, graph, MAXV * 5, BINS);
 
+    int x;
+    std::cin >> x;
     sf::Clock clock;
 
     while (window.isOpen())
