@@ -13,8 +13,10 @@
 				<Option compiler="gcc" />
 				<Compiler>
 					<Add option="-g" />
+					<Add option="-pthread" />
 				</Compiler>
 				<Linker>
+					<Add option="-pthread" />
 					<Add library="sfml-graphics" />
 					<Add library="sfml-window" />
 					<Add library="sfml-system" />
@@ -27,6 +29,7 @@
 				<Option compiler="gcc" />
 				<Compiler>
 					<Add option="-O2" />
+					<Add option="-pthread" />
 				</Compiler>
 				<Linker>
 					<Add option="-s" />
@@ -38,12 +41,19 @@
 		</Build>
 		<Compiler>
 			<Add option="-Wall" />
+			<Add option="-g" />
 			<Add option="-fexceptions" />
+			<Add option="-pthread" />
 		</Compiler>
+		<Linker>
+			<Add option="-O3" />
+			<Add library="sfml-graphics" />
+			<Add library="sfml-window" />
+			<Add library="sfml-system" />
+			<Add library="z" />
+			<Add library="proj" />
+		</Linker>
 		<Unit filename="main.cpp" />
-		<Extensions>
-			<code_completion />
-			<debugger />
-		</Extensions>
+		<Extensions />
 	</Project>
 </CodeBlocks_project_file>
