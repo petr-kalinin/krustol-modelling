@@ -107,7 +107,7 @@ private:
 };
 
 class PressureCollectorYWall : public YWall {
-    static const constexpr double LAMBDA = 0.3;
+    static const constexpr double LAMBDA = 0.5;
 public:
     using YWall::YWall;
 
@@ -340,8 +340,10 @@ int main()
     };
     Gas gas(N, dist, boundaries);
 
-    Graph graph(1300, MAXY, 3e3, MAXY, true);
+    Graph graph(MAXX, MAXY, 3e3, MAXY, true);
 
+    int x;
+    std::cin >> x;
     sf::Clock clock;
 
     while (window.isOpen())
