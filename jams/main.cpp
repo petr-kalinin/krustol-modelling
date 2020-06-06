@@ -424,7 +424,7 @@ private:
 };
 
 class CarGenerator {
-    static const constexpr double JAMS_FRACTION = 0.2;
+    static const constexpr double JAMS_FRACTION = 0.1;
     static const constexpr double UPDATE_FRACTION = 0.5;
 public:
     CarGenerator(const Graph& graph) : graph_(graph), gen_(time(0)), dist_(0, graph.vertices().size() - 1), jams_(0, 1) {
@@ -622,7 +622,7 @@ int main()
         sf::Time elapsed = clock.restart();
         totalTime += elapsed;
 
-        cars = totalTime.asSeconds() * 10;
+        cars = (totalTime.asSeconds() - 5) * 10;
 
         while (graph.carsCount() < cars) {
             graph.addCar(generator.generate());
